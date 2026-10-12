@@ -1,0 +1,93 @@
+# OpenTherm gateway with flow temperature (CH setpoint) limit
+# Hardware: LOLIN S3 Mini + DIYLESS Master & Slave OpenTherm Shields
+# Appliance: Weheat Flint, thermostat stays in control; the gateway only lowers
+# the flow setpoint the thermostat requests when it exceeds the limit.
+
+substitutions:
+  device_name: opentherm-gateway
+  friendly_name: OpenTherm Gateway
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: lolin_s3_mini
+  variant: esp32s3
+  framework:
+    type: arduino   # OpenTherm Library is Arduino based
+
+logger:
+  level: DEBUG
+  logs:
+    opentherm.component: DEBUG
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${device_name}-ap"
+
+captive_portal:
+
+external_components:
+  - source: github://JOUW-GITHUB-NAAM/ESPHome-OpenTherm-Gateway@ch-setpoint-limit
+    components: [ opentherm ]
+
+# Limit adjustable from Home Assistant, remembered across reboots
+number:
+  - platform: template
+    id: flow_limit
+    name: "Max aanvoertemperatuur"
+    icon: mdi:thermometer-chevron-down
+    unit_of_measurement: "°C"
+    min_value: 25
+    max_value: 60
+    step: 0.5
+    initial_value: 40
+    optimistic: true
+    restore_value: true
+    mode: box
+
+opentherm:
+  id: opentherm_gateway
+  # DIYLESS shields on LOLIN S3 Mini (same positions as D2/D1/D6/D7 on a D1 mini)
+  in_pin: 35          # D2 - Master shield, to Flint
+  out_pin: 36         # D1 - Master shield, to Flint
+  slave_in_pin: 13    # D6 - Slave shield, to thermostat
+  slave_out_pin: 11   # D7 - Slave shield, to thermostat
+
+  ch_setpoint_limit:
+    max_temperature: 40          # fallback while flow_limit has no value yet
+    number_id: flow_limit
+    limit_max_ch_setpoint: true  # also lower thermostat writes of Data-ID 57
+    mask_from_thermostat: false  # true = thermostat sees its own value in the ACK
+    thermostat_setpoint:
+      name: "Thermostaat gevraagde aanvoertemperatuur"
+    active:
+      name: "Aanvoerbegrenzing actief"
+
+  heating_target_temperature:
+    name: "Aanvoer setpoint naar Flint"
+  boiler_temperature:
+    name: "Aanvoertemperatuur"
+  return_temperature:
+    name: "Retourtemperatuur"
+  modulation:
+    name: "Modulatie"
+
+  ch_active:
+    name: "Verwarming actief"
+  fault:
+    name: "Storing"
+
+  dropped_frames:
+    name: "OpenTherm verloren frames"

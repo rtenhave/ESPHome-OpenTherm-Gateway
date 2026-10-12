@@ -1,0 +1,46 @@
+# Compile test: CH setpoint limit on ESP32-S3 (LOLIN S3 Mini + DIYLESS gateway shields)
+esphome:
+  name: opentherm-limit-test
+
+esp32:
+  board: lolin_s3_mini
+  variant: esp32s3
+  framework:
+    type: arduino
+
+logger:
+
+number:
+  - platform: template
+    id: flow_limit
+    name: "Max flow temperature"
+    min_value: 20
+    max_value: 70
+    step: 0.5
+    initial_value: 45
+    optimistic: true
+    restore_value: true
+
+opentherm:
+  id: opentherm_gateway
+  in_pin: 35
+  out_pin: 36
+  slave_in_pin: 13
+  slave_out_pin: 11
+
+  ch_setpoint_limit:
+    max_temperature: 45
+    number_id: flow_limit
+    thermostat_setpoint:
+      name: "Thermostat requested flow setpoint"
+    active:
+      name: "Flow limit active"
+
+  heating_target_temperature:
+    name: "Flow setpoint sent"
+
+external_components:
+  - source:
+      type: local
+      path: ../../components
+    components: [ opentherm ]

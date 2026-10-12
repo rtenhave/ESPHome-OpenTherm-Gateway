@@ -192,6 +192,14 @@ namespace esphome
       if (room_setpoint_sensor_ != nullptr && !std::isnan(cached_room_setpoint_.value))
         room_setpoint_sensor_->publish_state(cached_room_setpoint_.value);
 
+      if (ch_limit_seen_tset_)
+      {
+        if (thermostat_ch_setpoint_sensor_ != nullptr && !std::isnan(last_thermostat_tset_))
+          thermostat_ch_setpoint_sensor_->publish_state(last_thermostat_tset_);
+        if (ch_limit_active_sensor_ != nullptr)
+          ch_limit_active_sensor_->publish_state(ch_limit_active_);
+      }
+
       for (auto &read_sensor : read_sensors_)
       {
         if (read_sensor.sensor == nullptr)
@@ -420,8 +428,23 @@ namespace esphome
           "DHW");
     }
 
+    float OpenthermComponent::getChLimit() const
+    {
+      float limit = ch_limit_default_;
+      if (ch_limit_number_ != nullptr && ch_limit_number_->has_state() && !std::isnan(ch_limit_number_->state))
+        limit = ch_limit_number_->state;
+      return ch_limit::limit_is_valid(limit) ? limit : NAN;
+    }
+
     bool OpenthermComponent::setHeatingTargetTemperature(float temperature)
     {
+      // The limit also applies to overrides from Home Assistant
+      float limit = getChLimit();
+      if (!std::isnan(limit) && temperature > limit)
+      {
+        ESP_LOGW(TAG, "CH override %.1f°C exceeds limit, using %.1f°C", temperature, limit);
+        temperature = limit;
+      }
       return setTemperatureWithVerification(
           temperature,
           OpenThermMessageID::TSet,
@@ -455,20 +478,51 @@ namespace esphome
         return;
       }
 
+      // CH setpoint limit: lower thermostat writes of TSet (and optionally MaxTSet) to the configured limit.
+      // Runs from slave_ot_->process() in loop(), not in interrupt context.
+      const unsigned long thermostat_request = request;
+      bool clamped = false;
+      const float limit = instance_->getChLimit();
+      request = ch_limit::clamp_request(thermostat_request, limit, instance_->ch_limit_max_tset_, clamped);
+
+      if (ch_limit::msg_type(thermostat_request) == ch_limit::MSG_TYPE_WRITE_DATA &&
+          ch_limit::data_id(thermostat_request) == ch_limit::DATA_ID_TSET)
+      {
+        instance_->last_thermostat_tset_ = ch_limit::f88_to_float(ch_limit::data(thermostat_request));
+        instance_->ch_limit_active_ = clamped;
+        instance_->ch_limit_seen_tset_ = true;
+      }
+
+      if (clamped)
+      {
+        ESP_LOGD(TAG, "Limited thermostat write id %u: %.1f°C -> %.1f°C",
+                 static_cast<unsigned>(ch_limit::data_id(thermostat_request)),
+                 ch_limit::f88_to_float(ch_limit::data(thermostat_request)), limit);
+      }
+
       unsigned long response = instance_->ot_->sendRequest(request);
+
+      // Optionally echo the thermostat's own value in the ACK, so it never sees the lowered setpoint
+      unsigned long thermostat_response = response;
+      if (clamped && instance_->ch_limit_mask_ack_ && instance_->ot_->isValidResponse(response) &&
+          ch_limit::msg_type(response) == ch_limit::MSG_TYPE_WRITE_ACK)
+      {
+        thermostat_response = ch_limit::replace_data(response, ch_limit::data(thermostat_request));
+      }
+
       // 0 = boiler did not answer, bad parity = noise; let the thermostat time out instead of relaying garbage
-      if (response != 0 && !instance_->ot_->parity(response))
-        instance_->slave_ot_->sendResponse(response);
+      if (thermostat_response != 0 && !instance_->ot_->parity(thermostat_response))
+        instance_->slave_ot_->sendResponse(thermostat_response);
       instance_->last_relay_ms_ = millis();
 
       OpenThermMessageID id = instance_->ot_->getDataID(request);
       OpenThermMessageType msg_type = instance_->ot_->getMessageType(request);
       bool valid = instance_->ot_->isValidResponse(response);
 
-      ESP_LOGV(TAG, "Relayed 0x%08lX -> 0x%08lX", request, response);
+      ESP_LOGV(TAG, "Relayed 0x%08lX (sent 0x%08lX) -> 0x%08lX", thermostat_request, request, response);
 
       if (msg_type == OpenThermMessageType::WRITE_DATA)
-        instance_->logThermostatWrite(request);
+        instance_->logThermostatWrite(thermostat_request);
 
       // Update status response (critical for binary sensors)
       if (id == OpenThermMessageID::Status && valid)

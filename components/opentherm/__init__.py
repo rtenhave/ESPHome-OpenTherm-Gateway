@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, sensor, climate
+from esphome.components import binary_sensor, sensor, climate, number
 from esphome.const import (
     CONF_ID,
     CONF_TEMPERATURE,
@@ -23,7 +23,7 @@ import esphome.core as core
 CODEOWNERS = ["@sakrut"]
 # The C++ sources always include these platform headers, so load them even when
 # the user's YAML has no top-level sensor/binary_sensor/climate/button sections.
-AUTO_LOAD = ["sensor", "binary_sensor", "climate", "button"]
+AUTO_LOAD = ["sensor", "binary_sensor", "climate", "button", "number"]
 # Component constants
 CONF_FLAME = "flame"
 CONF_CH_ACTIVE = "ch_active"
@@ -60,6 +60,14 @@ CONF_OEM_DIAGNOSTIC_CODE = "oem_diagnostic_code"
 CONF_MASTER_OT_VERSION = "master_ot_version"
 CONF_SLAVE_OT_VERSION = "slave_ot_version"
 CONF_DROPPED_FRAMES = "dropped_frames"
+# CH (flow temperature) setpoint limit
+CONF_CH_SETPOINT_LIMIT = "ch_setpoint_limit"
+CONF_MAX_TEMPERATURE = "max_temperature"
+CONF_NUMBER_ID = "number_id"
+CONF_LIMIT_MAX_CH_SETPOINT = "limit_max_ch_setpoint"
+CONF_MASK_FROM_THERMOSTAT = "mask_from_thermostat"
+CONF_THERMOSTAT_SETPOINT = "thermostat_setpoint"
+CONF_ACTIVE = "active"
 
 # Generate namespaces
 opentherm_ns = cg.esphome_ns.namespace("esphome::opentherm")
@@ -178,6 +186,28 @@ CONFIG_SCHEMA = cv.Schema({
         entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         icon="mdi:alert-circle-outline",
     ),
+    cv.Optional(CONF_CH_SETPOINT_LIMIT): cv.All(
+        cv.Schema({
+            # Fixed limit; also the fallback while number_id has no state yet
+            cv.Optional(CONF_MAX_TEMPERATURE): cv.float_range(min=10.0, max=90.0),
+            # Adjustable limit from Home Assistant (e.g. a template number)
+            cv.Optional(CONF_NUMBER_ID): cv.use_id(number.Number),
+            # Also lower thermostat writes of Max CH setpoint (Data-ID 57)
+            cv.Optional(CONF_LIMIT_MAX_CH_SETPOINT, default=True): cv.boolean,
+            # Reply to the thermostat with its own value instead of the limited one
+            cv.Optional(CONF_MASK_FROM_THERMOSTAT, default=False): cv.boolean,
+            cv.Optional(CONF_THERMOSTAT_SETPOINT): sensor.sensor_schema(
+                unit_of_measurement=UNIT_CELSIUS,
+                accuracy_decimals=1,
+                device_class=DEVICE_CLASS_TEMPERATURE,
+                state_class=STATE_CLASS_MEASUREMENT,
+            ),
+            cv.Optional(CONF_ACTIVE): binary_sensor.binary_sensor_schema(
+                icon="mdi:thermometer-chevron-down",
+            ),
+        }),
+        cv.has_at_least_one_key(CONF_MAX_TEMPERATURE, CONF_NUMBER_ID),
+    ),
     cv.Optional(CONF_FLAME): binary_sensor.binary_sensor_schema(
         device_class=DEVICE_CLASS_HEAT,
     ),
@@ -289,6 +319,23 @@ async def to_code(config):
     if CONF_DROPPED_FRAMES in config:
         sens = await sensor.new_sensor(config[CONF_DROPPED_FRAMES])
         cg.add(var.set_dropped_frames_sensor(sens))
+
+    # CH setpoint limit
+    if CONF_CH_SETPOINT_LIMIT in config:
+        limit_conf = config[CONF_CH_SETPOINT_LIMIT]
+        if CONF_MAX_TEMPERATURE in limit_conf:
+            cg.add(var.set_ch_limit_default(limit_conf[CONF_MAX_TEMPERATURE]))
+        if CONF_NUMBER_ID in limit_conf:
+            num = await cg.get_variable(limit_conf[CONF_NUMBER_ID])
+            cg.add(var.set_ch_limit_number(num))
+        cg.add(var.set_ch_limit_max_tset(limit_conf[CONF_LIMIT_MAX_CH_SETPOINT]))
+        cg.add(var.set_ch_limit_mask_ack(limit_conf[CONF_MASK_FROM_THERMOSTAT]))
+        if CONF_THERMOSTAT_SETPOINT in limit_conf:
+            sens = await sensor.new_sensor(limit_conf[CONF_THERMOSTAT_SETPOINT])
+            cg.add(var.set_thermostat_ch_setpoint_sensor(sens))
+        if CONF_ACTIVE in limit_conf:
+            sens = await binary_sensor.new_binary_sensor(limit_conf[CONF_ACTIVE])
+            cg.add(var.set_ch_limit_active_sensor(sens))
 
     # Register binary sensors
     if CONF_FLAME in config:

@@ -28,3 +28,5 @@ jobs:
           echo -e "wifi_ssid: 'wifi_ssid'\nwifi_password: 'wifi_password'\nesphome_fallback_password: 'fallback_password'" > secrets.yaml
       - run: esphome compile build.yaml
       - run: esphome compile tests/minimal_hub/minimal_hub_test.yaml
+      - run: esphome compile tests/ch_setpoint_limit/ch_setpoint_limit_test.yaml
+      - run: g++ -std=c++17 -Wall -I components/opentherm tests/ch_limit_unit/ch_limit_test.cpp -o /tmp/ch_limit_test && /tmp/ch_limit_test

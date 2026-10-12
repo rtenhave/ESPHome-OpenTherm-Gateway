@@ -3,7 +3,9 @@
 #include "esphome/core/component.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/number/number.h"
 #include "OpenTherm.h"
+#include "ch_limit.h"
 #include "opentherm_climate.h"
 #include <map>
 #include <vector>
@@ -72,6 +74,16 @@ namespace esphome
       void set_fault_sensor(binary_sensor::BinarySensor *sensor) { fault_ = sensor; }
       void set_diagnostic_sensor(binary_sensor::BinarySensor *sensor) { diagnostic_ = sensor; }
 
+      // CH (flow temperature) setpoint limit
+      void set_ch_limit_default(float limit) { ch_limit_default_ = limit; }
+      void set_ch_limit_number(number::Number *number) { ch_limit_number_ = number; }
+      void set_ch_limit_max_tset(bool enabled) { ch_limit_max_tset_ = enabled; }
+      void set_ch_limit_mask_ack(bool enabled) { ch_limit_mask_ack_ = enabled; }
+      void set_thermostat_ch_setpoint_sensor(sensor::Sensor *sensor) { thermostat_ch_setpoint_sensor_ = sensor; }
+      void set_ch_limit_active_sensor(binary_sensor::BinarySensor *sensor) { ch_limit_active_sensor_ = sensor; }
+      // Active limit in °C, or NAN when no valid limit is configured
+      float getChLimit() const;
+
       // Climate registration
       void register_climate(OpenthermClimate *climate);
 
@@ -135,6 +147,17 @@ namespace esphome
       binary_sensor::BinarySensor *dhw_active_{nullptr};
       binary_sensor::BinarySensor *fault_{nullptr};
       binary_sensor::BinarySensor *diagnostic_{nullptr};
+
+      // CH setpoint limit
+      float ch_limit_default_{NAN};
+      number::Number *ch_limit_number_{nullptr};
+      bool ch_limit_max_tset_{true};
+      bool ch_limit_mask_ack_{false};
+      sensor::Sensor *thermostat_ch_setpoint_sensor_{nullptr};
+      binary_sensor::BinarySensor *ch_limit_active_sensor_{nullptr};
+      float last_thermostat_tset_{NAN};  // What the thermostat last asked for (before clamping)
+      bool ch_limit_active_{false};      // Last thermostat TSet write was lowered
+      bool ch_limit_seen_tset_{false};   // At least one thermostat TSet write intercepted
 
       // Climate controllers
       OpenthermClimate *hot_water_climate_{nullptr};

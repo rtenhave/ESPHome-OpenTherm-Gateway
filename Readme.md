@@ -146,6 +146,44 @@ button:
     icon: "mdi:restart-alert"
 ```
 
+## CH Setpoint Limit (flow temperature cap)
+
+The thermostat stays in control, but any flow temperature it requests above the limit is lowered before it reaches the appliance. Useful for heat pumps, where a lower flow temperature means a better COP.
+
+```yaml
+number:
+  - platform: template
+    id: flow_limit
+    name: "Max flow temperature"
+    min_value: 25
+    max_value: 60
+    step: 0.5
+    initial_value: 40
+    optimistic: true
+    restore_value: true
+
+opentherm:
+  # ...pins...
+  ch_setpoint_limit:
+    max_temperature: 40          # fixed limit / fallback (10-90 °C)
+    number_id: flow_limit        # optional: adjustable from Home Assistant
+    limit_max_ch_setpoint: true  # also lower writes of Max CH setpoint (Data-ID 57)
+    mask_from_thermostat: false  # true: ACK to thermostat carries its own value
+    thermostat_setpoint:
+      name: "Thermostat requested flow setpoint"
+    active:
+      name: "Flow limit active"
+```
+
+- Only thermostat `WRITE-DATA` frames for Data-ID 1 (TSet) and, optionally, 57 (MaxTSet) are changed; all other traffic is relayed untouched.
+- Requests at or below the limit, including 0 (heating off), pass unchanged.
+- An invalid limit (outside 10-90 °C, or no value) disables limiting: the gateway falls back to plain relaying.
+- Overrides via `heating_water_climate` are capped by the same limit.
+- `heating_target_temperature` shows what the appliance actually received.
+
+The clamp logic lives in `components/opentherm/ch_limit.h` and has a host unit test:
+`g++ -std=c++17 -I components/opentherm tests/ch_limit_unit/ch_limit_test.cpp -o t && ./t`
+
 ## Wiring (Gateway Mode)
 
 ```
