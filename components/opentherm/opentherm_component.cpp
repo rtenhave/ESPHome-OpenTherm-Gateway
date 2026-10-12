@@ -119,6 +119,7 @@ namespace esphome
       }
 
       fetchPendingValue();
+      checkManualTimeout();
     }
 
     void OpenthermComponent::update()
@@ -436,6 +437,41 @@ namespace esphome
       return ch_limit::limit_is_valid(limit) ? limit : NAN;
     }
 
+    float OpenthermComponent::getManualSetpoint() const
+    {
+      if (manual_switch_ == nullptr || manual_number_ == nullptr || !manual_switch_->state)
+        return NAN;
+      if (!manual_number_->has_state())
+        return NAN;
+      float value = manual_number_->state;
+      return ch_limit::limit_is_valid(value) ? value : NAN;
+    }
+
+    void OpenthermComponent::checkManualTimeout()
+    {
+      if (manual_switch_ == nullptr)
+        return;
+
+      bool on = manual_switch_->state;
+      if (on && !manual_was_on_)
+      {
+        manual_on_since_ = millis();
+        ESP_LOGI(TAG, "Manual flow setpoint mode ON%s",
+                 manual_force_ch_enable_ ? " (gateway requests heating)" : "");
+      }
+      else if (!on && manual_was_on_)
+      {
+        ESP_LOGI(TAG, "Manual flow setpoint mode OFF, thermostat in control");
+      }
+      manual_was_on_ = on;
+
+      if (on && manual_timeout_ms_ > 0 && millis() - manual_on_since_ >= manual_timeout_ms_)
+      {
+        ESP_LOGW(TAG, "Manual flow setpoint mode timed out, switching off");
+        manual_switch_->turn_off();
+      }
+    }
+
     bool OpenthermComponent::setHeatingTargetTemperature(float temperature)
     {
       // The limit also applies to overrides from Home Assistant
@@ -478,36 +514,63 @@ namespace esphome
         return;
       }
 
-      // CH setpoint limit: lower thermostat writes of TSet (and optionally MaxTSet) to the configured limit.
       // Runs from slave_ot_->process() in loop(), not in interrupt context.
       const unsigned long thermostat_request = request;
-      bool clamped = false;
       const float limit = instance_->getChLimit();
-      request = ch_limit::clamp_request(thermostat_request, limit, instance_->ch_limit_max_tset_, clamped);
+      const float manual = instance_->getManualSetpoint();
+      const bool is_tset_write = ch_limit::msg_type(thermostat_request) == ch_limit::MSG_TYPE_WRITE_DATA &&
+                                 ch_limit::data_id(thermostat_request) == ch_limit::DATA_ID_TSET;
 
-      if (ch_limit::msg_type(thermostat_request) == ch_limit::MSG_TYPE_WRITE_DATA &&
-          ch_limit::data_id(thermostat_request) == ch_limit::DATA_ID_TSET)
+      // 1. Manual mode: replace the thermostat's TSet with the manual setpoint (capped by the limit)
+      //    and, if configured, request central heating ourselves.
+      bool manual_changed = false;
+      bool status_forced = false;
+      if (!std::isnan(manual))
       {
-        instance_->last_thermostat_tset_ = ch_limit::f88_to_float(ch_limit::data(thermostat_request));
-        instance_->ch_limit_active_ = clamped;
+        request = ch_limit::apply_manual_setpoint(request, manual, limit, manual_changed);
+        if (instance_->manual_force_ch_enable_)
+          request = ch_limit::force_ch_enable(request, status_forced);
+      }
+
+      // 2. CH setpoint limit: lower TSet (and optionally MaxTSet) writes to the configured limit
+      bool clamped = false;
+      request = ch_limit::clamp_request(request, limit, instance_->ch_limit_max_tset_, clamped);
+
+      if (is_tset_write)
+      {
+        const float thermostat_tset = ch_limit::f88_to_float(ch_limit::data(thermostat_request));
+        const float wanted = std::isnan(manual) ? thermostat_tset : manual;
+        instance_->last_thermostat_tset_ = thermostat_tset;
+        instance_->ch_limit_active_ = !std::isnan(limit) && wanted > limit;
         instance_->ch_limit_seen_tset_ = true;
       }
 
-      if (clamped)
+      const bool tset_changed = manual_changed || clamped;
+      if (tset_changed)
       {
-        ESP_LOGD(TAG, "Limited thermostat write id %u: %.1f°C -> %.1f°C",
+        ESP_LOGD(TAG, "%s thermostat write id %u: %.1f°C -> %.1f°C", manual_changed ? "Manual" : "Limited",
                  static_cast<unsigned>(ch_limit::data_id(thermostat_request)),
-                 ch_limit::f88_to_float(ch_limit::data(thermostat_request)), limit);
+                 ch_limit::f88_to_float(ch_limit::data(thermostat_request)),
+                 ch_limit::f88_to_float(ch_limit::data(request)));
+      }
+      if (status_forced)
+      {
+        ESP_LOGV(TAG, "Manual mode: CH enable forced in status request");
       }
 
       unsigned long response = instance_->ot_->sendRequest(request);
 
-      // Optionally echo the thermostat's own value in the ACK, so it never sees the lowered setpoint
       unsigned long thermostat_response = response;
-      if (clamped && instance_->ch_limit_mask_ack_ && instance_->ot_->isValidResponse(response) &&
-          ch_limit::msg_type(response) == ch_limit::MSG_TYPE_WRITE_ACK)
+      if (instance_->ot_->isValidResponse(response))
       {
-        thermostat_response = ch_limit::replace_data(response, ch_limit::data(thermostat_request));
+        // Optionally echo the thermostat's own value in the ACK, so it never sees the changed setpoint
+        if (tset_changed && instance_->ch_limit_mask_ack_ &&
+            ch_limit::msg_type(response) == ch_limit::MSG_TYPE_WRITE_ACK)
+          thermostat_response = ch_limit::replace_data(response, ch_limit::data(thermostat_request));
+
+        // The status response echoes the master flags; give the thermostat back its own flags
+        if (status_forced)
+          thermostat_response = ch_limit::restore_master_status_echo(response, ch_limit::data(thermostat_request));
       }
 
       // 0 = boiler did not answer, bad parity = noise; let the thermostat time out instead of relaying garbage

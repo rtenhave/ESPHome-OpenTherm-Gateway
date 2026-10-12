@@ -1,7 +1,8 @@
 # OpenTherm gateway with flow temperature (CH setpoint) limit
 # Hardware: LOLIN S3 Mini + DIYLESS Master & Slave OpenTherm Shields
-# Appliance: Weheat Flint, thermostat stays in control; the gateway only lowers
-# the flow setpoint the thermostat requests when it exceeds the limit.
+# Appliance: Weheat Flint. Normally the thermostat stays in control and the gateway
+# only lowers a flow setpoint above the limit. With the manual switch on, the gateway
+# sends its own flow setpoint (still capped by the limit) and requests heating itself.
 
 substitutions:
   device_name: opentherm-gateway
@@ -57,6 +58,28 @@ number:
     restore_value: true
     mode: box
 
+  # Handmatige aanvoertemperatuur (alleen actief als de switch aan staat)
+  - platform: template
+    id: manual_flow_setpoint
+    name: "Handmatig aanvoersetpoint"
+    icon: mdi:thermometer-water
+    unit_of_measurement: "°C"
+    min_value: 20
+    max_value: 60
+    step: 0.5
+    initial_value: 35
+    optimistic: true
+    restore_value: true
+    mode: box
+
+switch:
+  - platform: template
+    id: manual_flow
+    name: "Handmatige aanvoertemperatuur"
+    icon: mdi:hand-back-right
+    optimistic: true
+    restore_mode: ALWAYS_OFF   # na een herstart altijd terug naar de thermostaat
+
 opentherm:
   id: opentherm_gateway
   # DIYLESS shields on LOLIN S3 Mini (same positions as D2/D1/D6/D7 on a D1 mini)
@@ -74,6 +97,12 @@ opentherm:
       name: "Thermostaat gevraagde aanvoertemperatuur"
     active:
       name: "Aanvoerbegrenzing actief"
+
+  manual_setpoint:
+    switch_id: manual_flow
+    number_id: manual_flow_setpoint
+    force_ch_enable: true        # gateway vraagt zelf verwarming aan zolang de switch aan staat
+    timeout: 4h                  # daarna automatisch terug naar de thermostaat (weglaten = geen timeout)
 
   heating_target_temperature:
     name: "Aanvoer setpoint naar Flint"

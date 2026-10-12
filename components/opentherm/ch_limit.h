@@ -95,6 +95,53 @@ namespace esphome
         return replace_data(request, float_to_f88(limit));
       }
 
+      // ---- Manual mode -------------------------------------------------------
+
+      constexpr uint8_t MSG_TYPE_READ_DATA = 0b000;
+      constexpr uint8_t DATA_ID_STATUS = 0;
+      constexpr uint16_t MASTER_CH_ENABLE = 0x0100; // Status HB bit 0: CH enable
+
+      // Replace the value of a thermostat TSet WRITE with the manual setpoint (capped by limit when valid).
+      // `changed` is set when the frame was modified. Other frames, or an invalid manual value, pass through.
+      inline uint32_t apply_manual_setpoint(uint32_t request, float manual, float limit, bool &changed)
+      {
+        changed = false;
+        if (!limit_is_valid(manual) || msg_type(request) != MSG_TYPE_WRITE_DATA || data_id(request) != DATA_ID_TSET)
+          return request;
+
+        float target = manual;
+        if (limit_is_valid(limit) && target > limit)
+          target = limit;
+
+        uint16_t new_data = float_to_f88(target);
+        if (new_data == data(request))
+          return request;
+
+        changed = true;
+        return replace_data(request, new_data);
+      }
+
+      // Set the master CH-enable flag in a thermostat Status READ. `changed` is set when it was off.
+      inline uint32_t force_ch_enable(uint32_t request, bool &changed)
+      {
+        changed = false;
+        if (msg_type(request) != MSG_TYPE_READ_DATA || data_id(request) != DATA_ID_STATUS)
+          return request;
+        if (data(request) & MASTER_CH_ENABLE)
+          return request;
+
+        changed = true;
+        return replace_data(request, data(request) | MASTER_CH_ENABLE);
+      }
+
+      // The slave echoes the master status in the high byte of its Status response. Put the thermostat's
+      // own flags back, so it never sees the CH enable it did not ask for. The slave flags (low byte) stay.
+      inline uint32_t restore_master_status_echo(uint32_t response, uint16_t thermostat_data)
+      {
+        uint16_t new_data = (thermostat_data & 0xFF00) | (data(response) & 0x00FF);
+        return replace_data(response, new_data);
+      }
+
     } // namespace ch_limit
   } // namespace opentherm
 } // namespace esphome

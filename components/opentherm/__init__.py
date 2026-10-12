@@ -1,6 +1,6 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
-from esphome.components import binary_sensor, sensor, climate, number
+from esphome.components import binary_sensor, sensor, climate, number, switch
 from esphome.const import (
     CONF_ID,
     CONF_TEMPERATURE,
@@ -23,7 +23,7 @@ import esphome.core as core
 CODEOWNERS = ["@sakrut"]
 # The C++ sources always include these platform headers, so load them even when
 # the user's YAML has no top-level sensor/binary_sensor/climate/button sections.
-AUTO_LOAD = ["sensor", "binary_sensor", "climate", "button", "number"]
+AUTO_LOAD = ["sensor", "binary_sensor", "climate", "button", "number", "switch"]
 # Component constants
 CONF_FLAME = "flame"
 CONF_CH_ACTIVE = "ch_active"
@@ -68,6 +68,11 @@ CONF_LIMIT_MAX_CH_SETPOINT = "limit_max_ch_setpoint"
 CONF_MASK_FROM_THERMOSTAT = "mask_from_thermostat"
 CONF_THERMOSTAT_SETPOINT = "thermostat_setpoint"
 CONF_ACTIVE = "active"
+# Manual flow setpoint mode
+CONF_MANUAL_SETPOINT = "manual_setpoint"
+CONF_SWITCH_ID = "switch_id"
+CONF_FORCE_CH_ENABLE = "force_ch_enable"
+CONF_TIMEOUT = "timeout"
 
 # Generate namespaces
 opentherm_ns = cg.esphome_ns.namespace("esphome::opentherm")
@@ -208,6 +213,16 @@ CONFIG_SCHEMA = cv.Schema({
         }),
         cv.has_at_least_one_key(CONF_MAX_TEMPERATURE, CONF_NUMBER_ID),
     ),
+    cv.Optional(CONF_MANUAL_SETPOINT): cv.Schema({
+        # Switch that turns manual mode on/off (e.g. a template switch)
+        cv.Required(CONF_SWITCH_ID): cv.use_id(switch.Switch),
+        # Number holding the manual flow setpoint in °C (10-90; capped by ch_setpoint_limit)
+        cv.Required(CONF_NUMBER_ID): cv.use_id(number.Number),
+        # Gateway sets the CH enable flag itself while manual mode is on
+        cv.Optional(CONF_FORCE_CH_ENABLE, default=True): cv.boolean,
+        # Switch manual mode off automatically after this time (omit for no timeout)
+        cv.Optional(CONF_TIMEOUT): cv.positive_time_period_milliseconds,
+    }),
     cv.Optional(CONF_FLAME): binary_sensor.binary_sensor_schema(
         device_class=DEVICE_CLASS_HEAT,
     ),
@@ -336,6 +351,17 @@ async def to_code(config):
         if CONF_ACTIVE in limit_conf:
             sens = await binary_sensor.new_binary_sensor(limit_conf[CONF_ACTIVE])
             cg.add(var.set_ch_limit_active_sensor(sens))
+
+    # Manual flow setpoint mode
+    if CONF_MANUAL_SETPOINT in config:
+        manual_conf = config[CONF_MANUAL_SETPOINT]
+        sw = await cg.get_variable(manual_conf[CONF_SWITCH_ID])
+        cg.add(var.set_manual_switch(sw))
+        num = await cg.get_variable(manual_conf[CONF_NUMBER_ID])
+        cg.add(var.set_manual_number(num))
+        cg.add(var.set_manual_force_ch_enable(manual_conf[CONF_FORCE_CH_ENABLE]))
+        if CONF_TIMEOUT in manual_conf:
+            cg.add(var.set_manual_timeout(int(manual_conf[CONF_TIMEOUT].total_milliseconds)))
 
     # Register binary sensors
     if CONF_FLAME in config:

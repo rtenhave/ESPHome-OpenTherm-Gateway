@@ -76,6 +76,45 @@ int main() {
   uint32_t masked = replace_data(ack, float_to_f88(55.0f));
   CHECK(masked == lib_build(MSG_TYPE_WRITE_ACK, DATA_ID_TSET, float_to_f88(55.0f)));
 
+  // ---- Manual mode ----
+  // 11. Manual replaces thermostat TSet, capped by limit
+  req = lib_build(MSG_TYPE_WRITE_DATA, DATA_ID_TSET, float_to_f88(30.0f));
+  out = apply_manual_setpoint(req, 38.0f, 45.0f, clamped);
+  CHECK(clamped && f88_to_float(data(out)) == 38.0f && lib_valid_parity(out) && data_id(out) == DATA_ID_TSET);
+  out = apply_manual_setpoint(req, 55.0f, 45.0f, clamped);
+  CHECK(clamped && f88_to_float(data(out)) == 45.0f);
+  // also when thermostat asks 0
+  req = lib_build(MSG_TYPE_WRITE_DATA, DATA_ID_TSET, 0);
+  out = apply_manual_setpoint(req, 35.0f, 45.0f, clamped);
+  CHECK(clamped && f88_to_float(data(out)) == 35.0f);
+  // no limit configured -> manual as is
+  out = apply_manual_setpoint(req, 55.0f, NAN, clamped);
+  CHECK(clamped && f88_to_float(data(out)) == 55.0f);
+  // same value -> unchanged frame
+  req = lib_build(MSG_TYPE_WRITE_DATA, DATA_ID_TSET, float_to_f88(35.0f));
+  CHECK(apply_manual_setpoint(req, 35.0f, 45.0f, clamped) == req && !clamped);
+  // invalid manual -> pass through
+  CHECK(apply_manual_setpoint(req, NAN, 45.0f, clamped) == req && !clamped);
+  CHECK(apply_manual_setpoint(req, 0.0f, 45.0f, clamped) == req && !clamped);
+  // other ids untouched
+  req = lib_build(MSG_TYPE_WRITE_DATA, 56, float_to_f88(60.0f));
+  CHECK(apply_manual_setpoint(req, 35.0f, 45.0f, clamped) == req && !clamped);
+
+  // 12. Force CH enable on Status READ (HB bit0), keep other master flags (DHW enable = bit1)
+  req = lib_build(MSG_TYPE_READ_DATA, DATA_ID_STATUS, 0x0200);
+  out = force_ch_enable(req, clamped);
+  CHECK(clamped && data(out) == 0x0300 && lib_valid_parity(out) && msg_type(out) == MSG_TYPE_READ_DATA);
+  CHECK(out == lib_build(MSG_TYPE_READ_DATA, DATA_ID_STATUS, 0x0300));
+  req = lib_build(MSG_TYPE_READ_DATA, DATA_ID_STATUS, 0x0100);
+  CHECK(force_ch_enable(req, clamped) == req && !clamped);
+  req = lib_build(MSG_TYPE_WRITE_DATA, DATA_ID_TSET, 0x0000);
+  CHECK(force_ch_enable(req, clamped) == req && !clamped);
+
+  // 13. Restore status echo: slave answers READ_ACK (0b100) with HB=0x03 echo, LB=0x0A slave flags
+  uint32_t st_resp = lib_build(0b100, DATA_ID_STATUS, 0x030A);
+  uint32_t st_back = restore_master_status_echo(st_resp, 0x0200);
+  CHECK(st_back == lib_build(0b100, DATA_ID_STATUS, 0x020A) && lib_valid_parity(st_back));
+
   std::printf(failures ? "%d FAILURE(S)\n" : "all ch_limit tests passed\n", failures);
   return failures ? 1 : 0;
 }

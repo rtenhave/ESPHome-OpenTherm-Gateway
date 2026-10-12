@@ -21,6 +21,23 @@ number:
     optimistic: true
     restore_value: true
 
+  - platform: template
+    id: manual_flow_setpoint
+    name: "Manual flow setpoint"
+    min_value: 20
+    max_value: 60
+    step: 0.5
+    initial_value: 35
+    optimistic: true
+    restore_value: true
+
+switch:
+  - platform: template
+    id: manual_flow
+    name: "Manual flow temperature"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+
 opentherm:
   id: opentherm_gateway
   in_pin: 35
@@ -35,6 +52,12 @@ opentherm:
       name: "Thermostat requested flow setpoint"
     active:
       name: "Flow limit active"
+
+  manual_setpoint:
+    switch_id: manual_flow
+    number_id: manual_flow_setpoint
+    force_ch_enable: true
+    timeout: 4h
 
   heating_target_temperature:
     name: "Flow setpoint sent"

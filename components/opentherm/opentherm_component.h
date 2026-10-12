@@ -4,6 +4,7 @@
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/number/number.h"
+#include "esphome/components/switch/switch.h"
 #include "OpenTherm.h"
 #include "ch_limit.h"
 #include "opentherm_climate.h"
@@ -84,6 +85,14 @@ namespace esphome
       // Active limit in °C, or NAN when no valid limit is configured
       float getChLimit() const;
 
+      // Manual flow setpoint mode
+      void set_manual_switch(switch_::Switch *sw) { manual_switch_ = sw; }
+      void set_manual_number(number::Number *number) { manual_number_ = number; }
+      void set_manual_force_ch_enable(bool enabled) { manual_force_ch_enable_ = enabled; }
+      void set_manual_timeout(uint32_t timeout_ms) { manual_timeout_ms_ = timeout_ms; }
+      // Manual setpoint in °C when manual mode is on and the value is valid, otherwise NAN
+      float getManualSetpoint() const;
+
       // Climate registration
       void register_climate(OpenthermClimate *climate);
 
@@ -158,6 +167,15 @@ namespace esphome
       float last_thermostat_tset_{NAN};  // What the thermostat last asked for (before clamping)
       bool ch_limit_active_{false};      // Last thermostat TSet write was lowered
       bool ch_limit_seen_tset_{false};   // At least one thermostat TSet write intercepted
+
+      // Manual flow setpoint mode
+      switch_::Switch *manual_switch_{nullptr};
+      number::Number *manual_number_{nullptr};
+      bool manual_force_ch_enable_{true};
+      uint32_t manual_timeout_ms_{0};      // 0 = no automatic switch-off
+      unsigned long manual_on_since_{0};
+      bool manual_was_on_{false};
+      void checkManualTimeout();
 
       // Climate controllers
       OpenthermClimate *hot_water_climate_{nullptr};

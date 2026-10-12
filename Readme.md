@@ -184,6 +184,42 @@ opentherm:
 The clamp logic lives in `components/opentherm/ch_limit.h` and has a host unit test:
 `g++ -std=c++17 -I components/opentherm tests/ch_limit_unit/ch_limit_test.cpp -o t && ./t`
 
+## Manual Flow Setpoint
+
+With the manual switch on, every TSet write from the thermostat is replaced by your own setpoint (still capped by `ch_setpoint_limit`). With `force_ch_enable`, the gateway also sets the CH enable flag in the Status request, so the appliance heats even when the thermostat does not ask for heat. The thermostat gets its own status flags echoed back.
+
+```yaml
+number:
+  - platform: template
+    id: manual_flow_setpoint
+    name: "Manual flow setpoint"
+    min_value: 20
+    max_value: 60
+    step: 0.5
+    initial_value: 35
+    optimistic: true
+    restore_value: true
+
+switch:
+  - platform: template
+    id: manual_flow
+    name: "Manual flow temperature"
+    optimistic: true
+    restore_mode: ALWAYS_OFF     # back to thermostat control after a reboot
+
+opentherm:
+  # ...pins...
+  manual_setpoint:
+    switch_id: manual_flow
+    number_id: manual_flow_setpoint
+    force_ch_enable: true        # gateway requests heating itself while on
+    timeout: 4h                  # optional: switch off automatically
+```
+
+- Manual mode only works while the thermostat is connected: the gateway changes the thermostat's frames and does not talk to the appliance on its own.
+- A manual value outside 10-90 °C (or no value) is ignored and the thermostat stays in control.
+- `thermostat_setpoint` keeps showing what the thermostat asked for; `heating_target_temperature` shows what the appliance received.
+
 ## Wiring (Gateway Mode)
 
 ```
